@@ -1,0 +1,197 @@
+name: se4cs - Plaso
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REPORT_DIR: reports
+
+jobs:
+  check-secrets:
+    runs-on: ubuntu-latest
+    outputs:
+      has_gg: ${{ steps.check.outputs.has_gg }}
+      has_snyk: ${{ steps.check.outputs.has_snyk }}
+      has_sonar: ${{ steps.check.outputs.has_sonar }}
+      has_semgrep: ${{ steps.check.outputs.has_semgrep }}
+    steps:
+      - id: check
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.GITGUARDIAN_API_KEY }}" ]; then echo "has_gg=true" >> $GITHUB_OUTPUT; else echo "has_gg=false" >> $GITHUB_OUTPUT; fi
+          if [ -n "${{ secrets.SNYK_TOKEN }}" ]; then echo "has_snyk=true" >> $GITHUB_OUTPUT; else echo "has_snyk=false" >> $GITHUB_OUTPUT; fi
+          if [[ -n "${{ secrets.SONAR_TOKEN }}" && -n "${{ vars.SONAR_PROJECT_KEY }}" ]]; then echo "has_sonar=true" >> $GITHUB_OUTPUT; else echo "has_sonar=false" >> $GITHUB_OUTPUT; fi
+          if [ -n "${{ secrets.SEMGREP_APP_TOKEN }}" ]; then echo "has_semgrep=true" >> $GITHUB_OUTPUT; else echo "has_semgrep=false" >> $GITHUB_OUTPUT; fi
+
+  gitguardian:
+    name: GitGuardian
+    needs: check-secrets
+    if: needs.check-secrets.outputs.has_gg == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run GitGuardian (Report + Dashboard push)
+        continue-on-error: true
+        env:
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+        run: |
+          mkdir -p "${REPORT_DIR}/gitguardian"
+          pip install ggshield
+          ggshield secret scan ci --json -o "${REPORT_DIR}/gitguardian/ggshield.json" --exit-zero
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gitguardian-report
+          path: reports/gitguardian
+
+  snyk:
+    name: Snyk
+    needs: check-secrets
+    if: needs.check-secrets.outputs.has_snyk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Run Snyk (Report + Dashboard push)
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          mkdir -p "${REPORT_DIR}/snyk"
+          npx snyk test --json-file-output="${REPORT_DIR}/snyk/snyk.json" || true
+          npx snyk monitor --org=numdav --project-name=spiderfoot
+          
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snyk-report
+          path: reports/snyk
+
+  semgrep:
+    name: Semgrep
+    needs: check-secrets
+    if: needs.check-secrets.outputs.has_semgrep == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep (Report + Dashboard push)
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        run: |
+          mkdir -p "${REPORT_DIR}/semgrep"
+          pip install semgrep
+          semgrep ci --json --output "${REPORT_DIR}/semgrep/semgrep.json" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-report
+          path: reports/semgrep
+
+  sonarcloud:
+    name: SonarQube Cloud
+    needs: check-secrets
+    if: needs.check-secrets.outputs.has_sonar == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SonarQube Cloud Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.sources=.
+            -Dsonar.host.url=https://sonarcloud.io
+
+      - name: Wait for Processing
+        run: sleep 10
+
+      - name: Export Sonar Data to JSON
+        if: always()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mkdir -p "${REPORT_DIR}/sonarcloud"
+          curl -sSf -H "Authorization: Bearer ${SONAR_TOKEN}" \
+            "https://sonarcloud.io/api/issues/search?componentKeys=${{ vars.SONAR_PROJECT_KEY }}&organization=${{ vars.SONAR_ORGANIZATION }}&ps=500" \
+            -o "${REPORT_DIR}/sonarcloud/sonar-issues.json" || true
+      
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sonarcloud-report
+          path: reports/sonarcloud/
+  
+  aggregate-reports:
+    name: Final Security Dashboard
+    needs: [gitguardian, snyk, semgrep, sonarcloud]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: reports
+
+      - name: Create Aggregator Script
+        run: |
+          cat << 'EOF' > merge_reports.py
+          import json
+          import os
+          from datetime import datetime
+
+          def generate_reports():
+              paths = {
+                  "gg": "reports/gitguardian-report/ggshield.json",
+                  "snyk": "reports/snyk-report/snyk.json",
+                  "semgrep": "reports/semgrep-report/semgrep.json",
+                  "sonar": "reports/sonarcloud-report/sonar-issues.json"
+              }
+              results = {}
+              for tool, path in paths.items():
+                  if os.path.exists(path):
+                      with open(path, 'r') as f:
+                          try:
+                              data = json.load(f)
+                              if tool == "gg": results["GitGuardian"] = data.get("total_incidents", 0)
+                              elif tool == "snyk": results["Snyk"] = len(data.get("vulnerabilities", []))
+                              elif tool == "semgrep": results["Semgrep"] = len(data.get("results", []))
+                              elif tool == "sonar": results["SonarCloud"] = data.get("total", data.get("paging", {}).get("total", 0))
+                          except: results[tool] = "Error"
+                  else: results[tool] = "N/A"
+
+              md = ["### Security Scan Summary", "| Tool | Findings | Status |", "| :--- | :---: | :--- |"]
+              for tool, count in results.items():
+                  status = "CLEAN" if str(count) == "0" else "REVIEW"
+                  md.append(f"| {tool} | **{count}** | {status} |")
+              
+              summary_file = os.environ.get('GITHUB_STEP_SUMMARY')
+              if summary_file:
+                  with open(summary_file, 'a') as f: f.write("\n".join(md))
+          if __name__ == "__main__": generate_reports()
+          EOF
+
+      - name: Run Aggregator
+        run: python merge_reports.py
