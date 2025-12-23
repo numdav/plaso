@@ -51,7 +51,7 @@ jobs:
         with:
           name: gitguardian-report
           path: reports/gitguardian
-		  
+
   snyk:
     name: Snyk
     needs: check-secrets
