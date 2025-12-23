@@ -69,8 +69,22 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
           mkdir -p "${REPORT_DIR}/snyk"
-          grep "name =" dependencies.ini | awk -F"= " '{print $2}' > core_requirements.txt
-          echo "Dipendenze estratte: $(wc -l < core_requirements.txt)"
+          python3 -c "
+          import configparser
+          config = configparser.ConfigParser()
+          config.read('dependencies.ini')
+          with open('core_requirements.txt', 'w') as f:
+            for section in config.sections():
+                # Cerchiamo la versione minima definita nel tuo file
+                version = config.get(section, 'minimum_version', fallback='')
+                if version:
+                    f.write(f'{section}>={version}\n')
+                else:
+                    f.write(f'{section}\n')
+          "
+          echo "--- FILE GENERATO PER SNYK ---"
+          cat core_requirements.txt
+          echo "-------------------------------"
           npx snyk test --file=core_requirements.txt \
             --package-manager=pip \
             --severity-threshold=low \
@@ -80,7 +94,7 @@ jobs:
             --package-manager=pip \
             --project-name=plaso-core \
             --org=numdav \
-            --skip-unresolved          	  
+            --skip-unresolved
       - uses: actions/upload-artifact@v4
         if: always()
         with:
