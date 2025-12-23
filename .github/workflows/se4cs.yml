@@ -67,16 +67,26 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
       - name: Run Snyk (Report + Dashboard push)
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-          run: |
-            mkdir -p "${REPORT_DIR}/snyk"
-            grep "name =" dependencies.ini | awk -F"= " '{print $2}' > core_requirements.txt
-            echo "Dipendenze estratte: $(wc -l < core_requirements.txt)"
-            npx snyk test --file=core_requirements.txt --package-manager=pip --severity-threshold=low --skip-unresolved --json-file-output="${REPORT_DIR}/snyk/snyk.json" || true
-            npx snyk monitor --file=core_requirements.txt --package-manager=pip --project-name=plaso-core --org=numdav --skip-unresolved          	  
+        run: |
+          mkdir -p "${REPORT_DIR}/snyk"
+          grep "name =" dependencies.ini | awk -F"= " '{print $2}' > core_requirements.txt
+          echo "Dipendenze estratte: $(wc -l < core_requirements.txt)"
+          npx snyk test --file=core_requirements.txt \
+            --package-manager=pip \
+            --severity-threshold=low \
+            --skip-unresolved \
+            --json-file-output="${REPORT_DIR}/snyk/snyk.json" || true
+          npx snyk monitor --file=core_requirements.txt \
+            --package-manager=pip \
+            --project-name=plaso-core \
+            --org=numdav \
+            --skip-unresolved          
+		  
       - uses: actions/upload-artifact@v4
         if: always()
         with:
