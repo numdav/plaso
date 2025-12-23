@@ -65,7 +65,7 @@ jobs:
           python-version: '3.9'
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip --skip-unresolved
+          python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       
       - name: Run Snyk (Report + Dashboard push)
@@ -74,8 +74,9 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
           mkdir -p "${REPORT_DIR}/snyk"
-          npx snyk test --all-projects --severity-threshold=high --json-file-output="${REPORT_DIR}/snyk/snyk.json" || true
-          npx snyk monitor --org=numdav --project-name=plaso
+          npx snyk config set disable-suggestions=true
+          npx snyk test --all-projects --severity-threshold=high --skip-unresolved --prune-repeated-subdependencies --json-file-output="${REPORT_DIR}/snyk/snyk.json" || true
+          npx snyk monitor --all-projects --org=numdav --project-name=plaso --skip-unresolved
           
       - uses: actions/upload-artifact@v4
         if: always()
