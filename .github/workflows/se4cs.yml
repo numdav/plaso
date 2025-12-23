@@ -72,7 +72,7 @@ jobs:
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        run: |
+         run: |
           mkdir -p "${REPORT_DIR}/snyk"
           grep "name =" dependencies.ini | awk -F"= " '{print $2}' > core_requirements.txt
           echo "Dipendenze estratte: $(wc -l < core_requirements.txt)"
