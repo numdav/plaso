@@ -72,11 +72,11 @@ jobs:
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
           run: |
-           mkdir -p "${REPORT_DIR}/snyk"
-           grep "name =" dependencies.ini | awk -F"= " '{print $2}' > core_requirements.txt
-           echo "Dipendenze estratte: $(wc -l < core_requirements.txt)"
-           npx snyk test --file=core_requirements.txt --package-manager=pip --severity-threshold=low --skip-unresolved --json-file-output="${REPORT_DIR}/snyk/snyk.json" || true
-           npx snyk monitor --file=core_requirements.txt --package-manager=pip --project-name=plaso-core --org=numdav --skip-unresolved          	  
+            mkdir -p "${REPORT_DIR}/snyk"
+            grep "name =" dependencies.ini | awk -F"= " '{print $2}' > core_requirements.txt
+            echo "Dipendenze estratte: $(wc -l < core_requirements.txt)"
+            npx snyk test --file=core_requirements.txt --package-manager=pip --severity-threshold=low --skip-unresolved --json-file-output="${REPORT_DIR}/snyk/snyk.json" || true
+            npx snyk monitor --file=core_requirements.txt --package-manager=pip --project-name=plaso-core --org=numdav --skip-unresolved          	  
       - uses: actions/upload-artifact@v4
         if: always()
         with:
